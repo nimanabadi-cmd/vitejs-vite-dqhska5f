@@ -11,7 +11,7 @@ import {
   updateProfile
 } from 'firebase/auth';
 import { 
-  getFirestore, collection, doc, getDoc, setDoc, addDoc, onSnapshot, updateDoc, deleteDoc, query, where
+  getFirestore, collection, doc, getDoc, setDoc, addDoc, onSnapshot, updateDoc, deleteDoc, query, where, getDocs
 } from 'firebase/firestore';
 
 import { 
@@ -1081,35 +1081,45 @@ function StudentEntry({ setView, setActiveCourse, user }) {
 
   const joinCourse = async () => {
     try {
-      // Sicherheits-Check: Stelle sicher, dass der User eingeloggt ist (auch anonym)
       if (!auth.currentUser) {
           await signInAnonymously(auth);
+          // Kurze Wartezeit für Token-Propagation
+          await new Promise(r => setTimeout(r, 500));
       }
 
       const q = collection(db, 'artifacts', appId, 'public', 'data', 'courses');
-      const snapshot = await new Promise(resolve => { const unsub = onSnapshot(q, (snap) => { unsub(); resolve(snap); }); });
+      const snapshot = await getDocs(q);
+      
       const courseDoc = snapshot.docs.find(doc => doc.id.toUpperCase().startsWith(code.toUpperCase()));
+      
       if (courseDoc) {
-        // Register Student in Public Analytics
         if(auth.currentUser) {
             const currentUser = auth.currentUser;
             const studentId = currentUser.uid;
             const studentName = currentUser.displayName || (currentUser.isAnonymous ? "Gast" : currentUser.email.split('@')[0]);
-            const analyticsRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${courseDoc.id}_${studentId}`);
             
-            // Only update basic info, don't overwrite progress
-            await setDoc(analyticsRef, {
-                courseId: courseDoc.id,
-                studentId: studentId,
-                studentName: studentName,
-                lastUpdated: Date.now()
-            }, { merge: true });
+            // Analytics-Eintrag nur erstellen/updaten, wenn erfolgreich
+            try {
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${courseDoc.id}_${studentId}`), {
+                    courseId: courseDoc.id,
+                    studentId: studentId,
+                    studentName: studentName,
+                    lastUpdated: Date.now()
+                }, { merge: true });
+            } catch(e) {
+                console.log("Analytics update failed (non-critical):", e);
+            }
         }
 
         setActiveCourse({ id: courseDoc.id, ...courseDoc.data() });
         setView('student-view');
-      } else { setError("Kurs nicht gefunden."); }
-    } catch (e) { setError("Fehler: " + e.message); }
+      } else { 
+          setError("Kurs nicht gefunden."); 
+      }
+    } catch (e) { 
+        console.error(e);
+        setError("Fehler: " + e.message); 
+    }
   };
 
   return (
@@ -1146,10 +1156,10 @@ function StudentEntry({ setView, setActiveCourse, user }) {
 
 // --- 5. STUDENT LERNPFAD VIEW (PER TASK) ---
 function StudentLernpfad({ user, course, setView }) {
-  const [progress, setProgress] = useState({}); // { taskId: { done: bool, checked: bool, signature: string } }
+  const [progress, setProgress] = useState({}); 
   const [activeTopic, setActiveTopic] = useState(null);
   const [activeChapter, setActiveChapter] = useState(null);
-  const [activeTaskId, setActiveTaskId] = useState(null); // For Signature Modal
+  const [activeTaskId, setActiveTaskId] = useState(null); 
   const [showSigModal, setShowSigModal] = useState(false);
   const [examDate, setExamDate] = useState(""); 
    
@@ -1171,7 +1181,6 @@ function StudentLernpfad({ user, course, setView }) {
   const scratchCanvasRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // Settings
   const showGrades = course.settings?.showGrades !== false;
   const thresholds = course.settings?.gradeThresholds || DEFAULT_THRESHOLDS;
 
@@ -1204,7 +1213,6 @@ function StudentLernpfad({ user, course, setView }) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [aiMessages]);
 
-  // CALCULATE GLOBAL PROGRESS FOR ANALYTICS SYNC
   const calculateGlobalProgress = (currentProgress) => {
       let totalTasks = 0;
       let doneTasks = 0;
@@ -1231,19 +1239,20 @@ function StudentLernpfad({ user, course, setView }) {
     setProgress(newProgress);
     
     if (user) {
-        // Save private
         await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
         
-        // Sync public analytics
         const globalPerc = calculateGlobalProgress(newProgress);
         const studentName = user.displayName || (user.isAnonymous ? "Gast" : user.email.split('@')[0]);
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
-            courseId: course.id,
-            studentId: user.uid,
-            studentName: studentName,
-            percentage: globalPerc,
-            lastUpdated: Date.now()
-        }, { merge: true });
+        // Wrap analytics update in try/catch to be safe
+        try {
+             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
+                courseId: course.id,
+                studentId: user.uid,
+                studentName: studentName,
+                percentage: globalPerc,
+                lastUpdated: Date.now()
+            }, { merge: true });
+        } catch(e) { console.log("Analytics update skipped", e); }
     }
   };
 
@@ -1257,12 +1266,13 @@ function StudentLernpfad({ user, course, setView }) {
     if (user) {
         await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
         
-        // Sync public analytics
         const globalPerc = calculateGlobalProgress(newProgress);
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
-            percentage: globalPerc,
-            lastUpdated: Date.now()
-        }, { merge: true });
+        try {
+             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
+                percentage: globalPerc,
+                lastUpdated: Date.now()
+            }, { merge: true });
+        } catch(e) { console.log("Analytics update skipped", e); }
     }
   };
 
@@ -1551,12 +1561,10 @@ function StudentLernpfad({ user, course, setView }) {
         <div className="h-screen flex flex-col bg-slate-50">
             <div className="bg-indigo-600 p-4 text-white pt-6 pb-6 rounded-b-3xl shadow-xl shadow-indigo-200 z-10 relative"> 
                 <button onClick={() => setActiveTopic(null)} className="absolute top-4 left-4 text-indigo-200 hover:text-white transition"><LucideChevronRight className="rotate-180" size={20}/></button>
-                <div className="text-center"> {/* Centered title to save space or layout better? No, kept left align as per design but compacted */}
-                     {/* Actually, let's keep the layout but tighter */}
-                </div>
+                <div className="text-center"></div>
                 
                 {/* Adjusted Title Area */}
-                <div className="mt-2 mb-2 pl-8"> {/* Added padding-left for the back button space */}
+                <div className="mt-2 mb-2 pl-8"> 
                     <h1 className="text-2xl font-black text-white leading-tight">{activeTopic.title}</h1>
                     <p className="text-indigo-200 text-xs font-medium">{activeTopic.chapters?.length || 0} Kapitel</p>
                 </div>
@@ -1608,7 +1616,7 @@ function StudentLernpfad({ user, course, setView }) {
                                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fortschritt</span>
                                         <span className="text-xs font-bold text-slate-600">{doneChapterTasks} <span className="text-slate-300">/</span> {totalChapterTasks} <span className="text-[10px] text-slate-400 font-normal">Aufgaben</span></span>
                                      </div>
-                                     <div className="w-full bg-slate-100 rounded-full h-1.5">
+                                     <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
                                         <div className={`h-1.5 rounded-full transition-all duration-700 ${doneChapterTasks === totalChapterTasks ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{width: `${chapterPerc}%`}}></div>
                                      </div>
                                 </div>
