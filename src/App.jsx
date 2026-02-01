@@ -149,9 +149,12 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState(null); 
 
   useEffect(() => {
+    // Einfache Auth-Initialisierung für externe Umgebungen
     const initAuth = async () => {
+      // Prüfe, ob bereits ein User eingeloggt ist (persistente Session)
       if (!auth.currentUser) {
          try {
+             // Versuche anonymen Login als Fallback
              await signInAnonymously(auth);
          } catch (e) {
              console.error("Auth Error:", e);
@@ -1078,14 +1081,20 @@ function StudentEntry({ setView, setActiveCourse, user }) {
 
   const joinCourse = async () => {
     try {
+      // Sicherheits-Check: Stelle sicher, dass der User eingeloggt ist (auch anonym)
+      if (!auth.currentUser) {
+          await signInAnonymously(auth);
+      }
+
       const q = collection(db, 'artifacts', appId, 'public', 'data', 'courses');
       const snapshot = await new Promise(resolve => { const unsub = onSnapshot(q, (snap) => { unsub(); resolve(snap); }); });
       const courseDoc = snapshot.docs.find(doc => doc.id.toUpperCase().startsWith(code.toUpperCase()));
       if (courseDoc) {
         // Register Student in Public Analytics
-        if(user) {
-            const studentId = user.uid;
-            const studentName = user.displayName || (user.isAnonymous ? "Gast" : user.email.split('@')[0]);
+        if(auth.currentUser) {
+            const currentUser = auth.currentUser;
+            const studentId = currentUser.uid;
+            const studentName = currentUser.displayName || (currentUser.isAnonymous ? "Gast" : currentUser.email.split('@')[0]);
             const analyticsRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${courseDoc.id}_${studentId}`);
             
             // Only update basic info, don't overwrite progress
