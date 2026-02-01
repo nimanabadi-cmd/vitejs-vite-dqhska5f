@@ -7,7 +7,8 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signInWithCustomToken,
-  signOut
+  signOut,
+  updateProfile
 } from 'firebase/auth';
 import { 
   getFirestore, collection, doc, getDoc, setDoc, addDoc, onSnapshot, updateDoc, deleteDoc, query, where
@@ -21,7 +22,7 @@ import {
   LucideImage, LucideFileText, LucideLink, LucideUpload, LucideToggleLeft, LucideToggleRight,
   LucideSparkles, LucideMessageSquare, LucideBrainCircuit, LucideSend, LucideWand2,
   LucideEye, LucideEyeOff, LucideRotateCcw, LucideDownload, LucideShare, LucideLibrary, LucideActivity,
-  LucideGlobe, LucideUser, LucideLock, LucideLoader, LucideAlertTriangle, LucideStar, LucideClock, LucideTarget
+  LucideGlobe, LucideUser, LucideLock, LucideLoader, LucideAlertTriangle, LucideStar, LucideClock, LucideTarget, LucideUserPlus, LucideGamepad2
 } from 'lucide-react';
 
 // --- FIREBASE CONFIG (Wiederhergestellt für StackBlitz) ---
@@ -41,6 +42,7 @@ const db = getFirestore(app);
 
 // In StackBlitz nutzen wir eine feste ID oder die Projekt-ID als Fallback
 const appId = "default-app-id"; 
+const STUDENT_EMAIL_SUFFIX = "@student.lernpfad.local"; // Fake-Domain für Schüler
 
 // --- GEMINI API SETUP ---
 const apiKey = "AIzaSyDI-ZVJ1gmb0dhMvDiLGLEsBq1LEThTY8o"; // Dein ursprünglicher Key
@@ -147,17 +149,9 @@ export default function App() {
   const [deferredPrompt, setDeferredPrompt] = useState(null); 
 
   useEffect(() => {
-    // Einfache Auth-Initialisierung für externe Umgebungen
     const initAuth = async () => {
-      // Prüfe, ob bereits ein User eingeloggt ist (persistente Session)
-      if (!auth.currentUser) {
-         try {
-             // Versuche anonymen Login als Fallback
-             await signInAnonymously(auth);
-         } catch (e) {
-             console.error("Auth Error:", e);
-         }
-      }
+      // Wir warten auf den Auth-Status, machen aber keinen Zwangs-Login am Anfang mehr
+      // damit der User auf der Landing Page entscheiden kann.
     };
     initAuth();
 
@@ -166,7 +160,6 @@ export default function App() {
       setLoading(false);
     });
     
-    // PWA Install Prompt Listener
     window.addEventListener('beforeinstallprompt', (e) => {
       e.preventDefault();
       setDeferredPrompt(e);
@@ -200,15 +193,106 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans selection:bg-indigo-100">
       {view === 'landing' && <LandingPage setView={setView} user={user} deferredPrompt={deferredPrompt} />}
       {view === 'auth' && <TeacherAuth setView={setView} />}
+      {view === 'student-auth' && <StudentAuth setView={setView} />}
       {view === 'teacher-dash' && <TeacherDashboard user={user} setView={setView} setActiveCourse={setActiveCourse} />}
       {view === 'course-editor' && <CourseEditor user={user} course={activeCourse} setView={setView} />}
-      {view === 'student-enter' && <StudentEntry setView={setView} setActiveCourse={setActiveCourse} />}
+      {view === 'student-enter' && <StudentEntry setView={setView} setActiveCourse={setActiveCourse} user={user} />}
       {view === 'student-view' && <StudentLernpfad user={user} course={activeCourse} setView={setView} />}
     </div>
   );
 }
 
-// --- NEW: TEACHER AUTH (LOGIN/REGISTER) ---
+// --- NEW: STUDENT AUTH (USERNAME/PASSWORD) ---
+function StudentAuth({ setView }) {
+    const [isLogin, setIsLogin] = useState(true);
+    const [username, setUsername] = useState("");
+    const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+
+    const handleAuth = async (e) => {
+        e.preventDefault();
+        setError("");
+        
+        // Erzeuge interne Emailadresse für Firebase
+        const cleanUsername = username.trim().toLowerCase().replace(/\s+/g, '.');
+        const email = `${cleanUsername}${STUDENT_EMAIL_SUFFIX}`;
+
+        try {
+            if (isLogin) {
+                await signInWithEmailAndPassword(auth, email, password);
+            } else {
+                const cred = await createUserWithEmailAndPassword(auth, email, password);
+                await updateProfile(cred.user, { displayName: username });
+            }
+            setView('student-enter'); 
+        } catch (err) {
+            console.error(err);
+            if(err.code === 'auth/invalid-credential') setError("Benutzername oder Passwort falsch.");
+            else if(err.code === 'auth/email-already-in-use') setError("Dieser Benutzername ist schon vergeben.");
+            else if(err.code === 'auth/weak-password') setError("Passwort muss mind. 6 Zeichen haben.");
+            else setError("Fehler: " + err.message);
+        }
+    };
+
+    return (
+        <div className="h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
+            <button onClick={() => setView('landing')} className="absolute top-6 left-6 text-slate-400 hover:text-slate-600"><LucideChevronRight className="rotate-180"/></button>
+            <div className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+                <div className="text-center mb-8">
+                    <div className="w-16 h-16 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl shadow-sm">
+                        <LucideGraduationCap />
+                    </div>
+                    <h2 className="text-3xl font-black text-slate-800">{isLogin ? 'Schüler Login' : 'Konto erstellen'}</h2>
+                    <p className="text-slate-400 text-sm mt-1">
+                        {isLogin ? 'Willkommen zurück! 👋' : 'Dein Fortschritt wird gespeichert.'}
+                    </p>
+                </div>
+                
+                <form onSubmit={handleAuth} className="space-y-4">
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Benutzername</label>
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 transition focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
+                            <LucideUser size={18} className="text-slate-400"/>
+                            <input 
+                                type="text" required 
+                                value={username} onChange={e => setUsername(e.target.value)}
+                                className="w-full bg-transparent p-3 outline-none text-sm font-bold text-slate-700" 
+                                placeholder="z.B. Max.Mustermann"
+                                autoCapitalize="off"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Passwort</label>
+                        <div className="flex items-center bg-slate-50 border border-slate-200 rounded-xl px-3 transition focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
+                            <LucideLock size={18} className="text-slate-400"/>
+                            <input 
+                                type="password" required 
+                                value={password} onChange={e => setPassword(e.target.value)}
+                                className="w-full bg-transparent p-3 outline-none text-sm font-bold text-slate-700" 
+                                placeholder="••••••"
+                            />
+                        </div>
+                    </div>
+                    
+                    {error && <div className="text-red-500 text-xs text-center font-bold bg-red-50 p-3 rounded-xl border border-red-100 flex items-center gap-2 justify-center"><LucideAlertTriangle size={14}/> {error}</div>}
+                    
+                    <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 transition shadow-lg shadow-indigo-200 flex items-center justify-center gap-2">
+                        {isLogin ? 'Los geht\'s 🚀' : 'Konto erstellen ✨'}
+                    </button>
+                </form>
+
+                <div className="mt-6 text-center">
+                    <button onClick={() => setIsLogin(!isLogin)} className="text-sm text-indigo-600 font-bold hover:underline">
+                        {isLogin ? 'Noch kein Konto? Hier registrieren.' : 'Bereits ein Konto? Anmelden.'}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// --- TEACHER AUTH (LOGIN/REGISTER) ---
 function TeacherAuth({ setView }) {
     const [isLogin, setIsLogin] = useState(true);
     const [email, setEmail] = useState("");
@@ -238,7 +322,7 @@ function TeacherAuth({ setView }) {
     return (
         <div className="h-screen flex flex-col items-center justify-center p-6">
             <button onClick={() => setView('landing')} className="absolute top-6 left-6 text-slate-400 hover:text-slate-600"><LucideChevronRight className="rotate-180"/></button>
-            <div className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-xl">
+            <div className="w-full max-w-sm bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
                 <div className="text-center mb-8">
                     <h2 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-br from-slate-800 to-slate-600">{isLogin ? 'Lehrer Login' : 'Konto erstellen'}</h2>
                     <p className="text-slate-400 text-sm mt-1">Verwalte deine Lernpfade</p>
@@ -305,7 +389,7 @@ function LandingPage({ setView, user, deferredPrompt }) {
     }
   };
 
-  const startStudent = async () => {
+  const startAnonymous = async () => {
       if (!user) {
           try {
               await signInAnonymously(auth);
@@ -324,20 +408,35 @@ function LandingPage({ setView, user, deferredPrompt }) {
       <h1 className="text-6xl font-black text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-violet-600 mb-4 tracking-tighter drop-shadow-sm">Lernpfad</h1>
       <p className="text-slate-500 mb-12 max-w-xs text-lg leading-relaxed">Die moderne Lernplattform für deinen Unterricht.</p>
        
-      <div className="grid gap-4 w-full max-w-sm">
-        <button onClick={startStudent} className="bg-white border-2 border-slate-200 p-6 rounded-2xl hover:border-indigo-500 hover:shadow-xl transition group text-left flex items-center gap-5 relative overflow-hidden">
-          <div className="bg-indigo-50 text-indigo-600 p-4 rounded-xl group-hover:scale-110 transition"><LucideGraduationCap size={28} /></div>
-          <div>
-              <h3 className="font-bold text-xl text-slate-700">Ich bin Schüler</h3>
-              <p className="text-sm text-slate-400 font-medium">Kurscode eingeben</p>
-          </div>
-        </button>
+      <div className="flex flex-col gap-4 w-full max-w-sm">
+        
+        {/* SCHÜLER SECTION */}
+        <div className="bg-white p-2 rounded-2xl border-2 border-slate-100 shadow-xl">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-2 mt-2">Schüler</h3>
+            <div className="grid gap-2">
+                <button onClick={() => setView('student-auth')} className="bg-indigo-50 hover:bg-indigo-100 p-4 rounded-xl transition flex items-center gap-4 group text-left">
+                    <div className="bg-white text-indigo-600 p-3 rounded-lg shadow-sm group-hover:scale-110 transition"><LucideUserPlus size={24} /></div>
+                    <div>
+                        <div className="font-bold text-slate-800">Anmelden / Registrieren</div>
+                        <div className="text-xs text-slate-500 font-medium">Fortschritt speichern 💾</div>
+                    </div>
+                </button>
+                <button onClick={startAnonymous} className="bg-white hover:bg-slate-50 p-4 rounded-xl transition flex items-center gap-4 group text-left border border-slate-100">
+                    <div className="bg-slate-100 text-slate-500 p-3 rounded-lg group-hover:scale-110 transition"><LucideGamepad2 size={24} /></div>
+                    <div>
+                        <div className="font-bold text-slate-700">Als Gast starten</div>
+                        <div className="text-xs text-slate-400 font-medium">Nur Kurscode eingeben 🚀</div>
+                    </div>
+                </button>
+            </div>
+        </div>
 
-        <button onClick={() => setView('auth')} className="bg-slate-900 text-white p-6 rounded-2xl hover:bg-slate-800 hover:shadow-xl transition text-left flex items-center gap-5">
-          <div className="bg-white/20 p-4 rounded-xl"><LucideLayoutDashboard size={28} /></div>
+        {/* LEHRER SECTION */}
+        <button onClick={() => setView('auth')} className="bg-slate-900 text-white p-5 rounded-2xl hover:bg-slate-800 hover:shadow-xl transition text-left flex items-center gap-5 mt-4">
+          <div className="bg-white/20 p-3 rounded-xl"><LucideLayoutDashboard size={24} /></div>
           <div>
-              <h3 className="font-bold text-xl">Lehrer-Login</h3>
-              <p className="text-sm text-slate-400 font-medium">Kurse erstellen</p>
+              <h3 className="font-bold text-lg">Lehrer-Login</h3>
+              <p className="text-xs text-slate-400 font-medium">Kurse erstellen & verwalten</p>
           </div>
         </button>
       </div>
@@ -873,7 +972,7 @@ function CourseEditor({ user, course, setView }) {
 }
 
 // --- 4. STUDENT ENTRY ---
-function StudentEntry({ setView, setActiveCourse }) {
+function StudentEntry({ setView, setActiveCourse, user }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
 
@@ -890,8 +989,21 @@ function StudentEntry({ setView, setActiveCourse }) {
   };
 
   return (
-    <div className="h-screen flex flex-col items-center justify-center p-6 bg-slate-900 text-white">
+    <div className="h-screen flex flex-col items-center justify-center p-6 bg-slate-900 text-white relative">
       <button onClick={() => setView('landing')} className="absolute top-6 left-6 text-slate-500 hover:text-white"><LucideChevronRight className="rotate-180"/></button>
+      
+      {user && !user.isAnonymous && (
+          <div className="absolute top-6 right-6 flex items-center gap-2">
+              <div className="text-right">
+                  <div className="text-xs text-slate-400 font-bold uppercase">Angemeldet als</div>
+                  <div className="text-sm font-bold text-white">{user.displayName || user.email.split('@')[0]}</div>
+              </div>
+              <div className="bg-indigo-500 w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg">
+                  {(user.displayName || user.email || "U")[0].toUpperCase()}
+              </div>
+          </div>
+      )}
+
       <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-b from-white to-indigo-200 mb-8 tracking-tight">Kurscode</h2>
       <div className="w-full max-w-xs">
         <input 
@@ -1323,8 +1435,20 @@ function StudentLernpfad({ user, course, setView }) {
     <div className="h-screen flex flex-col bg-slate-50">
       <div className="bg-indigo-600 p-6 text-white pt-12 pb-8 rounded-b-[2.5rem] shadow-xl shadow-indigo-200 z-10">
          <button onClick={() => setView('landing')} className="text-indigo-200 hover:text-white text-xs mb-4 flex items-center gap-1"><LucideLogOut size={12}/> Verlassen</button>
-         <h1 className="text-4xl font-black mb-2 drop-shadow-sm text-white">{course.title}</h1>
-         <p className="text-indigo-200 text-sm font-medium">Willkommen zurück!</p>
+         
+         <div className="flex justify-between items-start">
+             <div>
+                 <h1 className="text-4xl font-black mb-2 drop-shadow-sm text-white">{course.title}</h1>
+                 <p className="text-indigo-200 text-sm font-medium">Willkommen zurück!</p>
+             </div>
+             {user && !user.isAnonymous && (
+                 <div className="bg-indigo-500/50 p-2 rounded-xl flex items-center gap-2 border border-indigo-400/30">
+                     <div className="w-8 h-8 bg-white text-indigo-600 rounded-full flex items-center justify-center font-bold text-sm">
+                         {(user.displayName || user.email || "U")[0].toUpperCase()}
+                     </div>
+                 </div>
+             )}
+         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-6 -mt-4 pt-8 space-y-4 max-w-2xl mx-auto w-full pb-32">
          {topics.map((topic, idx) => {
