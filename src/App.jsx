@@ -22,7 +22,7 @@ import {
   LucideImage, LucideFileText, LucideLink, LucideUpload, LucideToggleLeft, LucideToggleRight,
   LucideSparkles, LucideMessageSquare, LucideBrainCircuit, LucideSend, LucideWand2,
   LucideEye, LucideEyeOff, LucideRotateCcw, LucideDownload, LucideShare, LucideLibrary, LucideActivity,
-  LucideGlobe, LucideUser, LucideLock, LucideLoader, LucideAlertTriangle, LucideStar, LucideClock, LucideTarget, LucideUserPlus, LucideGamepad2
+  LucideGlobe, LucideUser, LucideLock, LucideLoader, LucideAlertTriangle, LucideStar, LucideClock, LucideTarget, LucideUserPlus, LucideGamepad2, LucideBarChart3
 } from 'lucide-react';
 
 // --- FIREBASE CONFIG (Wiederhergestellt für StackBlitz) ---
@@ -150,8 +150,13 @@ export default function App() {
 
   useEffect(() => {
     const initAuth = async () => {
-      // Wir warten auf den Auth-Status, machen aber keinen Zwangs-Login am Anfang mehr
-      // damit der User auf der Landing Page entscheiden kann.
+      if (!auth.currentUser) {
+         try {
+             await signInAnonymously(auth);
+         } catch (e) {
+             console.error("Auth Error:", e);
+         }
+      }
     };
     initAuth();
 
@@ -196,10 +201,98 @@ export default function App() {
       {view === 'student-auth' && <StudentAuth setView={setView} />}
       {view === 'teacher-dash' && <TeacherDashboard user={user} setView={setView} setActiveCourse={setActiveCourse} />}
       {view === 'course-editor' && <CourseEditor user={user} course={activeCourse} setView={setView} />}
+      {view === 'teacher-analytics' && <TeacherAnalytics user={user} course={activeCourse} setView={setView} />}
       {view === 'student-enter' && <StudentEntry setView={setView} setActiveCourse={setActiveCourse} user={user} />}
       {view === 'student-view' && <StudentLernpfad user={user} course={activeCourse} setView={setView} />}
     </div>
   );
+}
+
+// --- NEW: TEACHER ANALYTICS ---
+function TeacherAnalytics({ user, course, setView }) {
+    const [students, setStudents] = useState([]);
+
+    useEffect(() => {
+        // Query the PUBLIC progress collection
+        const q = query(
+            collection(db, 'artifacts', appId, 'public', 'data', 'student_progress'),
+            where("courseId", "==", course.id)
+        );
+        
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setStudents(data);
+        });
+        return () => unsubscribe();
+    }, [course.id]);
+
+    const calculateGrade = (percentage) => {
+        const thresholds = course.settings?.gradeThresholds || DEFAULT_THRESHOLDS;
+        if (percentage >= thresholds[1]) return 1;
+        if (percentage >= thresholds[2]) return 2;
+        if (percentage >= thresholds[3]) return 3;
+        if (percentage >= thresholds[4]) return 4;
+        if (percentage >= thresholds[5]) return 5;
+        return 6;
+    };
+
+    return (
+        <div className="h-screen flex flex-col bg-slate-50">
+            <div className="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                <div className="flex items-center gap-4">
+                    <button onClick={() => setView('teacher-dash')} className="p-2 hover:bg-slate-100 rounded-full"><LucideChevronRight className="rotate-180" /></button>
+                    <div><h2 className="font-extrabold text-xl text-slate-800 tracking-tight">{course.title}</h2><p className="text-xs text-slate-500">Statistik & Fortschritt</p></div>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 max-w-5xl mx-auto w-full">
+                {students.length === 0 ? (
+                    <div className="text-center text-slate-400 py-20 flex flex-col items-center">
+                        <LucideUser size={48} className="mb-4 opacity-50"/>
+                        <p>Noch keine Schüler in diesem Kurs aktiv.</p>
+                    </div>
+                ) : (
+                    <div className="grid gap-4">
+                        {students.map(student => {
+                            // Calculate total progress from raw data if needed, but we save perc directly
+                            const grade = calculateGrade(student.percentage || 0);
+                            const lastActive = student.lastUpdated ? new Date(student.lastUpdated).toLocaleDateString() : 'Unbekannt';
+
+                            return (
+                                <div key={student.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex items-center justify-between hover:shadow-md transition">
+                                    <div className="flex items-center gap-4">
+                                        <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold text-lg">
+                                            {student.studentName ? student.studentName[0].toUpperCase() : '?'}
+                                        </div>
+                                        <div>
+                                            <div className="font-bold text-slate-800">{student.studentName || "Unbekannter Schüler"}</div>
+                                            <div className="text-xs text-slate-400">Zuletzt aktiv: {lastActive}</div>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center gap-6">
+                                        <div className="text-right">
+                                            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider">Fortschritt</div>
+                                            <div className="font-black text-xl text-slate-700">{student.percentage || 0}%</div>
+                                        </div>
+                                        
+                                        <div className="w-24 h-2 bg-slate-100 rounded-full overflow-hidden hidden sm:block">
+                                            <div className="bg-indigo-600 h-full rounded-full" style={{width: `${student.percentage || 0}%`}}></div>
+                                        </div>
+
+                                        <div className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center font-black text-lg border-2 ${grade <= 4 ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-orange-50 text-orange-600 border-orange-100'}`}>
+                                            <span className="text-[8px] uppercase tracking-wide opacity-70">Note</span>
+                                            {grade}
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
 }
 
 // --- NEW: STUDENT AUTH (USERNAME/PASSWORD) ---
@@ -547,6 +640,13 @@ function TeacherDashboard({ user, setView, setActiveCourse }) {
                 className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-bold hover:bg-indigo-700 flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 group-hover:shadow-indigo-300 transition"
               >
                 <LucideEdit size={16}/> Bearbeiten
+              </button>
+              <button 
+                onClick={() => { setActiveCourse(course); setView('teacher-analytics'); }}
+                className="bg-indigo-50 text-indigo-600 py-2.5 px-3 rounded-xl hover:bg-indigo-100 transition flex items-center justify-center"
+                title="Statistik"
+              >
+                <LucideBarChart3 size={20}/>
               </button>
               <button onClick={() => handleDelete(course.id)} className="p-2.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition"><LucideTrash size={18}/></button>
             </div>
@@ -982,10 +1082,25 @@ function StudentEntry({ setView, setActiveCourse, user }) {
       const snapshot = await new Promise(resolve => { const unsub = onSnapshot(q, (snap) => { unsub(); resolve(snap); }); });
       const courseDoc = snapshot.docs.find(doc => doc.id.toUpperCase().startsWith(code.toUpperCase()));
       if (courseDoc) {
+        // Register Student in Public Analytics
+        if(user) {
+            const studentId = user.uid;
+            const studentName = user.displayName || (user.isAnonymous ? "Gast" : user.email.split('@')[0]);
+            const analyticsRef = doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${courseDoc.id}_${studentId}`);
+            
+            // Only update basic info, don't overwrite progress
+            await setDoc(analyticsRef, {
+                courseId: courseDoc.id,
+                studentId: studentId,
+                studentName: studentName,
+                lastUpdated: Date.now()
+            }, { merge: true });
+        }
+
         setActiveCourse({ id: courseDoc.id, ...courseDoc.data() });
         setView('student-view');
       } else { setError("Kurs nicht gefunden."); }
-    } catch (e) { setError("Fehler."); }
+    } catch (e) { setError("Fehler: " + e.message); }
   };
 
   return (
@@ -1080,21 +1195,66 @@ function StudentLernpfad({ user, course, setView }) {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [aiMessages]);
 
+  // CALCULATE GLOBAL PROGRESS FOR ANALYTICS SYNC
+  const calculateGlobalProgress = (currentProgress) => {
+      let totalTasks = 0;
+      let doneTasks = 0;
+      (course.topics || []).forEach(topic => {
+          topic.chapters.forEach(c => {
+              const tasks = c.tasks || (c.task ? [{id: c.id, ...c}] : []);
+              totalTasks += tasks.length;
+              tasks.forEach(t => {
+                  const p = currentProgress[t.id];
+                  const reqSign = t.requireSign !== false;
+                  const reqCheck = t.requireCheck !== false;
+                  if(reqSign) { if(p?.signature) doneTasks++; }
+                  else if (reqCheck) { if(p?.checked) doneTasks++; }
+                  else { if(p?.done) doneTasks++; }
+              });
+          });
+      });
+      return totalTasks === 0 ? 0 : Math.round((doneTasks / totalTasks) * 100);
+  };
+
   const updateTaskProgress = async (taskId, field, value) => {
     const current = progress[taskId] || {};
     const newProgress = { ...progress, [taskId]: { ...current, [field]: value } };
     setProgress(newProgress);
-    if (user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
+    
+    if (user) {
+        // Save private
+        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
+        
+        // Sync public analytics
+        const globalPerc = calculateGlobalProgress(newProgress);
+        const studentName = user.displayName || (user.isAnonymous ? "Gast" : user.email.split('@')[0]);
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
+            courseId: course.id,
+            studentId: user.uid,
+            studentName: studentName,
+            percentage: globalPerc,
+            lastUpdated: Date.now()
+        }, { merge: true });
+    }
   };
 
   const resetTaskProgress = async (taskId) => {
     if(!confirm("Aufgabe wirklich zurücksetzen? Alle Haken und Unterschriften für diese Aufgabe werden gelöscht.")) return;
     
     const newProgress = { ...progress };
-    newProgress[taskId] = { done: false, checked: false, signature: null }; // Reset fields
+    newProgress[taskId] = { done: false, checked: false, signature: null }; 
     
     setProgress(newProgress);
-    if (user) await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
+    if (user) {
+        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'progress', course.id), { completed: newProgress }, { merge: true });
+        
+        // Sync public analytics
+        const globalPerc = calculateGlobalProgress(newProgress);
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'student_progress', `${course.id}_${user.uid}`), {
+            percentage: globalPerc,
+            lastUpdated: Date.now()
+        }, { merge: true });
+    }
   };
 
   const saveHomework = (newHw) => { setHomework(newHw); localStorage.setItem('homework', JSON.stringify(newHw)); };
@@ -1404,19 +1564,49 @@ function StudentLernpfad({ user, course, setView }) {
                 />
             </div>
             <div className="flex-1 overflow-y-auto p-6 -mt-4 pt-8 space-y-4 max-w-2xl mx-auto w-full pb-32">
-                {(activeTopic.chapters || []).map((chapter, idx) => (
-                    <div key={chapter.id || idx} onClick={() => setActiveChapter(chapter)} className="bg-white p-5 rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer border border-slate-100 flex items-center justify-between group">
-                        <div className="flex items-center gap-4">
-                            <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">{idx + 1}</div>
-                            <div className="flex-1">
-                                <h3 className="font-bold text-lg text-indigo-900 group-hover:text-indigo-600 transition">{chapter.title}</h3>
+                {(activeTopic.chapters || []).map((chapter, idx) => {
+                    const tasks = chapter.tasks || (chapter.task ? [{id: chapter.id, ...chapter}] : []);
+                    const totalChapterTasks = tasks.length;
+                    let doneChapterTasks = 0;
+                    tasks.forEach(t => {
+                        const p = progress[t.id];
+                        const reqSign = t.requireSign !== false;
+                        const reqCheck = t.requireCheck !== false;
+                        if(reqSign) { if(p?.signature) doneChapterTasks++; }
+                        else if (reqCheck) { if(p?.checked) doneChapterTasks++; }
+                        else { if(p?.done) doneChapterTasks++; }
+                    });
+                    const chapterPerc = totalChapterTasks === 0 ? 0 : Math.round((doneChapterTasks / totalChapterTasks) * 100);
+
+                    return (
+                        <div key={chapter.id || idx} onClick={() => setActiveChapter(chapter)} className="bg-white p-5 rounded-2xl shadow-sm hover:shadow-md transition cursor-pointer border border-slate-100 group">
+                            <div className="flex items-center justify-between mb-3">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-10 h-10 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm">{idx + 1}</div>
+                                    <div className="flex-1">
+                                        <h3 className="font-bold text-lg text-indigo-900 group-hover:text-indigo-600 transition">{chapter.title}</h3>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 p-2 rounded-full group-hover:bg-indigo-50 transition">
+                                    <LucideChevronRight size={18} className="text-slate-300 group-hover:text-indigo-400"/>
+                                </div>
                             </div>
+                            
+                            {/* Progress Section */}
+                            {totalChapterTasks > 0 && (
+                                <div className="pl-14">
+                                     <div className="flex justify-between items-center mb-1.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fortschritt</span>
+                                        <span className="text-xs font-bold text-slate-600">{doneChapterTasks} <span className="text-slate-300">/</span> {totalChapterTasks} <span className="text-[10px] text-slate-400 font-normal">Aufgaben</span></span>
+                                     </div>
+                                     <div className="w-full bg-slate-100 rounded-full h-1.5">
+                                        <div className={`h-1.5 rounded-full transition-all duration-700 ${doneChapterTasks === totalChapterTasks ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{width: `${chapterPerc}%`}}></div>
+                                     </div>
+                                </div>
+                            )}
                         </div>
-                        <div className="bg-slate-50 p-2 rounded-full group-hover:bg-indigo-50 transition">
-                            <LucideChevronRight size={18} className="text-slate-300 group-hover:text-indigo-400"/>
-                        </div>
-                    </div>
-                ))}
+                    );
+                })}
                 {(activeTopic.chapters || []).length === 0 && <div className="text-center text-slate-400 mt-10">Keine Kapitel vorhanden.</div>}
             </div>
              <ToolsOverlay 
